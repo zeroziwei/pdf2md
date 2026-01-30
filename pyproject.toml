@@ -23,7 +23,6 @@ dependencies = [
     "rich>=13.0.0", # Terminal formatting and progress bars
     "pillow>=10.0.0", # Image handling
     "requests>=2.31.0", # HTTP requests for MinerU API
-    "paddleocr>=3.3.3",
 ]
 
 [project.optional-dependencies]

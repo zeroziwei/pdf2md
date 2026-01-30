@@ -48,9 +48,7 @@ class MinerUExtractor(BaseExtractor):
         """
         return True
 
-    def extract(
-        self, pdf_path: Path, segment: Optional[Segment] = None
-    ) -> str:
+    def extract(self, pdf_path: Path, segment: Optional[Segment] = None) -> str:
         """
         Extract text from PDF using MinerU API.
 
@@ -98,15 +96,11 @@ class MinerUExtractor(BaseExtractor):
                 markdown = self._download_markdown(result)
                 markdown_dict[str(pdf_path)] = markdown
             else:
-                markdown_dict[str(pdf_path)] = (
-                    f"Error: {result.get('err_msg', 'Unknown error')}"
-                )
+                markdown_dict[str(pdf_path)] = f"Error: {result.get('err_msg', 'Unknown error')}"
 
         return markdown_dict
 
-    def _apply_upload_url(
-        self, file_name: str, data_id: str
-    ) -> Dict[str, Any]:
+    def _apply_upload_url(self, file_name: str, data_id: str) -> Dict[str, Any]:
         """
         Apply for upload URL for a single file.
 
@@ -147,10 +141,7 @@ class MinerUExtractor(BaseExtractor):
             "Authorization": f"Bearer {self.mineru_config.api_token}",
         }
         data = {
-            "files": [
-                {"name": name, "data_id": f"pdf_{i}"}
-                for i, name in enumerate(file_names)
-            ],
+            "files": [{"name": name, "data_id": f"pdf_{i}"} for i, name in enumerate(file_names)],
             "model_version": self.mineru_config.model_version,
         }
 
@@ -251,9 +242,7 @@ class MinerUExtractor(BaseExtractor):
         response.raise_for_status()
         return response.json()
 
-    def _wait_for_result(
-        self, batch_id: str, poll_interval: int = 10
-    ) -> Dict[str, Any]:
+    def _wait_for_result(self, batch_id: str, poll_interval: int = 10) -> Dict[str, Any]:
         """
         Wait for a single file to be processed.
 
@@ -268,9 +257,7 @@ class MinerUExtractor(BaseExtractor):
 
         while True:
             if time.time() - start_time > self.mineru_config.timeout:
-                raise TimeoutError(
-                    f"Processing timeout after {self.mineru_config.timeout}s"
-                )
+                raise TimeoutError(f"Processing timeout after {self.mineru_config.timeout}s")
 
             results = self._get_batch_results(batch_id)
 
@@ -304,18 +291,14 @@ class MinerUExtractor(BaseExtractor):
 
         while True:
             if time.time() - start_time > self.mineru_config.timeout:
-                raise TimeoutError(
-                    f"Processing timeout after {self.mineru_config.timeout}s"
-                )
+                raise TimeoutError(f"Processing timeout after {self.mineru_config.timeout}s")
 
             results = self._get_batch_results(batch_id)
 
             if results["code"] == 0:
                 extract_results = results["data"]["extract_result"]
                 # Check if all are done or failed
-                all_finished = all(
-                    r["state"] in ["done", "failed"] for r in extract_results
-                )
+                all_finished = all(r["state"] in ["done", "failed"] for r in extract_results)
                 if all_finished:
                     return extract_results
 
@@ -338,9 +321,12 @@ class MinerUExtractor(BaseExtractor):
         response.raise_for_status()
 
         # Save temporarily and extract
-        temp_zip = Path("/tmp") / f"{result['data_id']}.zip"
+        # temp_zip = Path("/tmp") / f"{result['data_id']}.zip"
+        # temp_zip = Path("output") / f"{result['data_id']}.zip"
+        pdf_dir = self.config.output_dir or Path.cwd()
+        temp_zip = pdf_dir / "outputs" / f"{result['data_id']}.zip"
         temp_zip.parent.mkdir(parents=True, exist_ok=True)
-
+        print(f"Saving ZIP to: {temp_zip}")
         with open(temp_zip, "wb") as f:
             f.write(response.content)
 
@@ -358,6 +344,6 @@ class MinerUExtractor(BaseExtractor):
         markdown_content = markdown_files[0].read_text(encoding="utf-8")
 
         # Clean up temporary files
-        temp_zip.unlink()
+        # temp_zip.unlink()
 
         return markdown_content
