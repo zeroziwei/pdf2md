@@ -36,7 +36,9 @@ console = Console()
 
 @app.command()
 def split(
-    pdf_path: Path = typer.Argument(..., help="Path to the PDF file", exists=True),
+    pdf_path: Path = typer.Argument(
+        ..., help="Path to the PDF file", exists=True
+    ),
     output_dir: Optional[Path] = typer.Option(
         None, "--output", "-o", help="Output directory"
     ),
@@ -44,7 +46,10 @@ def split(
         "toc", "--mode", "-m", help="Split mode: 'toc' or 'manual'"
     ),
     pages: Optional[str] = typer.Option(
-        None, "--pages", "-p", help="Page ranges for manual mode (e.g., '1-10,15-20')"
+        None,
+        "--pages",
+        "-p",
+        help="Page ranges for manual mode (e.g., '1-10,15-20')",
     ),
     level: int = typer.Option(
         1, "--level", "-l", help="TOC level to split on (for toc mode)"
@@ -105,8 +110,12 @@ def split(
                 TextColumn("[progress.description]{task.description}"),
                 console=console,
             ) as progress:
-                task = progress.add_task("Splitting by page ranges...", total=None)
-                document = splitter.split_and_save(pdf_path, ranges, output_dir)
+                task = progress.add_task(
+                    "Splitting by page ranges...", total=None
+                )
+                document = splitter.split_and_save(
+                    pdf_path, ranges, output_dir
+                )
                 progress.update(task, completed=True)
 
             console.print(
@@ -133,12 +142,17 @@ def split(
 
 @app.command()
 def convert(
-    pdf_path: Path = typer.Argument(..., help="Path to the PDF file", exists=True),
+    pdf_path: Path = typer.Argument(
+        ..., help="Path to the PDF file", exists=True
+    ),
     output_file: Path = typer.Option(
         "output.md", "--output", "-o", help="Output markdown file"
     ),
     engine: str = typer.Option(
-        "auto", "--engine", "-e", help="Extraction engine: auto, direct, ocr, mineru"
+        "auto",
+        "--engine",
+        "-e",
+        help="Extraction engine: auto, direct, ocr, mineru",
     ),
     clean: bool = typer.Option(
         True, "--clean/--no-clean", help="Apply post-processing"
@@ -146,7 +160,9 @@ def convert(
     start_page: Optional[int] = typer.Option(
         None, "--start", help="Start page (1-indexed)"
     ),
-    end_page: Optional[int] = typer.Option(None, "--end", help="End page (1-indexed)"),
+    end_page: Optional[int] = typer.Option(
+        None, "--end", help="End page (1-indexed)"
+    ),
     mineru_token: Optional[str] = typer.Option(
         None, "--mineru-token", help="MinerU API token"
     ),
@@ -181,7 +197,10 @@ def convert(
             output_dir=output_file.parent,
             enable_post_processing=clean,
             ocr_config=OcrConfig(lang=ocr_lang),
-            mineru_config=MinerUConfig(api_token=mineru_token or ""),
+            mineru_config=MinerUConfig(
+                api_token=mineru_token
+                or "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiI5MDQwMDk0MyIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc2ODc2MDExMSwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiIiwib3BlbklkIjpudWxsLCJ1dWlkIjoiYmM4ZGRlZjgtNTZlMC00NGIwLThlYjQtMjVmNzNkYzc5Y2RjIiwiZW1haWwiOiIiLCJleHAiOjE3Njk5Njk3MTF9.HE3Hy5iAbEKILDLJfnmDUEHlLjdk8LGcTit6XRb2lcpSJpMKdvM4sS1wdB2ve0tR6FI7-N6eqV27UFmu2JZTng"
+            ),
         )
 
         # Create segment if page range specified
@@ -199,7 +218,9 @@ def convert(
         router = ExtractorRouter(config)
 
         # Register available extractors
-        router.register_extractor(ExtractorType.DIRECT, DirectExtractor(config))
+        router.register_extractor(
+            ExtractorType.DIRECT, DirectExtractor(config)
+        )
 
         try:
             router.register_extractor(ExtractorType.OCR, OcrExtractor(config))
@@ -208,8 +229,18 @@ def convert(
                 "[yellow]Warning:[/yellow] PaddleOCR not available, OCR engine disabled"
             )
 
-        if config.mineru_config.api_token:
-            router.register_extractor(ExtractorType.MINERU, MinerUExtractor(config))
+        try:
+            router.register_extractor(
+                ExtractorType.MINERU, MinerUExtractor(config)
+            )
+        except ValueError as e:
+            if engine == "mineru":
+                console.print(f"[bold red]Error:[/bold red] {e}")
+                console.print(
+                    "Please provide MinerU API token with --mineru-token"
+                )
+                raise typer.Exit(1)
+            # If not explicitly requested, just don't register it
 
         # Extract markdown
         with Progress(
@@ -255,7 +286,9 @@ def convert(
 
 @app.command()
 def process(
-    pdf_path: Path = typer.Argument(..., help="Path to the PDF file", exists=True),
+    pdf_path: Path = typer.Argument(
+        ..., help="Path to the PDF file", exists=True
+    ),
     output_dir: Path = typer.Option(
         "output", "--output", "-o", help="Output directory"
     ),
@@ -265,7 +298,9 @@ def process(
     pages: Optional[str] = typer.Option(
         None, "--pages", help="Page ranges for manual split"
     ),
-    engine: str = typer.Option("auto", "--engine", "-e", help="Extraction engine"),
+    engine: str = typer.Option(
+        "auto", "--engine", "-e", help="Extraction engine"
+    ),
     clean: bool = typer.Option(
         True, "--clean/--no-clean", help="Apply post-processing"
     ),
@@ -327,7 +362,9 @@ def process(
             )
 
         elif split_by == "none":
-            console.print("[bold]Step 1:[/bold] No splitting (processing entire PDF)\n")
+            console.print(
+                "[bold]Step 1:[/bold] No splitting (processing entire PDF)\n"
+            )
 
         # Step 2: Convert segments to Markdown
         config = ConversionConfig(
@@ -339,7 +376,9 @@ def process(
         )
 
         router = ExtractorRouter(config)
-        router.register_extractor(ExtractorType.DIRECT, DirectExtractor(config))
+        router.register_extractor(
+            ExtractorType.DIRECT, DirectExtractor(config)
+        )
 
         try:
             router.register_extractor(ExtractorType.OCR, OcrExtractor(config))
@@ -347,7 +386,9 @@ def process(
             pass
 
         if config.mineru_config.api_token:
-            router.register_extractor(ExtractorType.MINERU, MinerUExtractor(config))
+            router.register_extractor(
+                ExtractorType.MINERU, MinerUExtractor(config)
+            )
 
         console.print("[bold]Step 2:[/bold] Converting to Markdown...")
 
@@ -374,7 +415,9 @@ def process(
 
                     # Clean if enabled
                     if clean:
-                        markdown = clean_markdown(markdown, config.post_process_config)
+                        markdown = clean_markdown(
+                            markdown, config.post_process_config
+                        )
 
                     # Save markdown
                     md_filename = segment_pdf.stem + ".md"
@@ -399,7 +442,9 @@ def process(
                 markdown = router.extract(pdf_path)
 
                 if clean:
-                    markdown = clean_markdown(markdown, config.post_process_config)
+                    markdown = clean_markdown(
+                        markdown, config.post_process_config
+                    )
 
                 md_path = output_dir / f"{pdf_path.stem}.md"
                 output_dir.mkdir(parents=True, exist_ok=True)
@@ -422,7 +467,9 @@ def process(
 
 @app.command()
 def info(
-    pdf_path: Path = typer.Argument(..., help="Path to the PDF file", exists=True),
+    pdf_path: Path = typer.Argument(
+        ..., help="Path to the PDF file", exists=True
+    ),
 ):
     """
     Display information about a PDF file.
@@ -456,7 +503,9 @@ def info(
 
         # Check if text-extractable
         is_extractable = BaseExtractor.is_text_extractable(pdf_path)
-        table.add_row("Text Extractable", "Yes" if is_extractable else "No (needs OCR)")
+        table.add_row(
+            "Text Extractable", "Yes" if is_extractable else "No (needs OCR)"
+        )
 
         # Metadata
         metadata = doc.metadata

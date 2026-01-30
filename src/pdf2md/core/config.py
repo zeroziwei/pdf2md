@@ -90,7 +90,9 @@ class ConversionConfig:
     split_mode: SplitMode = SplitMode.TOC
     output_dir: Path = field(default_factory=lambda: Path("output"))
     enable_post_processing: bool = True
-    post_process_config: PostProcessConfig = field(default_factory=PostProcessConfig)
+    post_process_config: PostProcessConfig = field(
+        default_factory=PostProcessConfig
+    )
     ocr_config: OcrConfig = field(default_factory=OcrConfig)
     mineru_config: MinerUConfig = field(default_factory=MinerUConfig)
     preserve_images: bool = False

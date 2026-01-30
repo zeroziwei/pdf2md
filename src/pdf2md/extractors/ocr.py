@@ -66,7 +66,9 @@ class OcrExtractor(BaseExtractor):
         # If text is not extractable, we need OCR
         return not self.is_text_extractable(pdf_path)
 
-    def extract(self, pdf_path: Path, segment: Optional[Segment] = None) -> str:
+    def extract(
+        self, pdf_path: Path, segment: Optional[Segment] = None
+    ) -> str:
         """
         Extract text from PDF using OCR and convert to Markdown.
 
@@ -239,12 +241,19 @@ class OcrExtractor(BaseExtractor):
                 return True
 
         # Short text starting with capital and no ending period
-        if len(text) < 80 and text and text[0].isupper() and not text.endswith("."):
+        if (
+            len(text) < 80
+            and text
+            and text[0].isupper()
+            and not text.endswith(".")
+        ):
             return True
 
         return False
 
-    def extract_with_layout(self, pdf_path: Path, segment: Optional[Segment] = None) -> str:
+    def extract_with_layout(
+        self, pdf_path: Path, segment: Optional[Segment] = None
+    ) -> str:
         """
         Extract text with layout analysis for better structure detection.
 
@@ -311,7 +320,9 @@ class OcrExtractor(BaseExtractor):
                         # Format table as markdown
                         table_html = item.get("res", {}).get("html", "")
                         if table_html:
-                            markdown_parts.append(self._html_table_to_markdown(table_html))
+                            markdown_parts.append(
+                                self._html_table_to_markdown(table_html)
+                            )
                             markdown_parts.append("\n\n")
 
                     elif item_type == "figure":

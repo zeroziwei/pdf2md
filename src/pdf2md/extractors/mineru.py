@@ -48,7 +48,9 @@ class MinerUExtractor(BaseExtractor):
         """
         return True
 
-    def extract(self, pdf_path: Path, segment: Optional[Segment] = None) -> str:
+    def extract(
+        self, pdf_path: Path, segment: Optional[Segment] = None
+    ) -> str:
         """
         Extract text from PDF using MinerU API.
 
@@ -102,7 +104,9 @@ class MinerUExtractor(BaseExtractor):
 
         return markdown_dict
 
-    def _apply_upload_url(self, file_name: str, data_id: str) -> Dict[str, Any]:
+    def _apply_upload_url(
+        self, file_name: str, data_id: str
+    ) -> Dict[str, Any]:
         """
         Apply for upload URL for a single file.
 

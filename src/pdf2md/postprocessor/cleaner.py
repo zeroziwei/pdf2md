@@ -306,7 +306,9 @@ class MarkdownCleaner:
             if heading_match:
                 # Save previous section
                 if current_content:
-                    sections.append((current_heading, "\n".join(current_content)))
+                    sections.append(
+                        (current_heading, "\n".join(current_content))
+                    )
 
                 # Start new section
                 current_heading = heading_match.group(2).strip()
@@ -321,7 +323,9 @@ class MarkdownCleaner:
         return sections
 
 
-def clean_markdown(markdown: str, config: Optional[PostProcessConfig] = None) -> str:
+def clean_markdown(
+    markdown: str, config: Optional[PostProcessConfig] = None
+) -> str:
     """
     Convenience function to clean markdown.
 

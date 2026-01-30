@@ -43,7 +43,9 @@ class DirectExtractor(BaseExtractor):
         """
         return self.is_text_extractable(pdf_path)
 
-    def extract(self, pdf_path: Path, segment: Optional[Segment] = None) -> str:
+    def extract(
+        self, pdf_path: Path, segment: Optional[Segment] = None
+    ) -> str:
         """
         Extract text from PDF and convert to Markdown.
 
@@ -187,7 +189,12 @@ class DirectExtractor(BaseExtractor):
                 return True
 
         # Check if text is short and starts with capital
-        if len(text) < 100 and text and text[0].isupper() and not text.endswith("."):
+        if (
+            len(text) < 100
+            and text
+            and text[0].isupper()
+            and not text.endswith(".")
+        ):
             # Check if font size is larger than average
             avg_size = 12
             if block.get("lines"):
@@ -304,7 +311,9 @@ class DirectExtractor(BaseExtractor):
                 image_ext = base_image["ext"]
 
                 # Save image
-                image_filename = f"page_{page_num + 1}_img_{img_index + 1}.{image_ext}"
+                image_filename = (
+                    f"page_{page_num + 1}_img_{img_index + 1}.{image_ext}"
+                )
                 image_path = output_dir / image_filename
 
                 with open(image_path, "wb") as img_file:

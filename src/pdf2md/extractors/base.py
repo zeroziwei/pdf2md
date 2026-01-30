@@ -28,7 +28,9 @@ class BaseExtractor(ABC):
         self.config = config
 
     @abstractmethod
-    def extract(self, pdf_path: Path, segment: Optional[Segment] = None) -> str:
+    def extract(
+        self, pdf_path: Path, segment: Optional[Segment] = None
+    ) -> str:
         """
         Extract text from PDF and convert to Markdown.
 
@@ -134,7 +136,9 @@ class ExtractorRouter:
             extractor = self._extractors.get(self.config.extractor_type)
             if extractor:
                 return extractor
-            raise ValueError(f"Extractor {self.config.extractor_type} not available")
+            raise ValueError(
+                f"Extractor {self.config.extractor_type} not available"
+            )
 
         # AUTO mode: detect best extractor
         # Priority: Direct → OCR → MinerU
@@ -149,7 +153,9 @@ class ExtractorRouter:
 
         raise ValueError("No suitable extractor found for PDF")
 
-    def extract(self, pdf_path: Path, segment: Optional[Segment] = None) -> str:
+    def extract(
+        self, pdf_path: Path, segment: Optional[Segment] = None
+    ) -> str:
         """
         Extract text from PDF using the appropriate engine.
 

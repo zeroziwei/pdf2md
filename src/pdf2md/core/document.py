@@ -12,6 +12,7 @@ from uuid import uuid4
 
 class SegmentStatus(str, Enum):
     """Status of a segment conversion."""
+
     CREATED = "created"
     SPLITTING = "splitting"
     READY = "ready"
@@ -27,7 +28,7 @@ class SegmentStatus(str, Enum):
 class Segment:
     """
     Represents a segment of a PDF document.
-    
+
     Attributes:
         segment_id: Unique identifier for the segment
         title: Title of the segment (e.g., chapter name)
@@ -42,6 +43,7 @@ class Segment:
         updated_at: Timestamp of last update
         error_message: Error message if status is FAILED
     """
+
     segment_id: str = field(default_factory=lambda: str(uuid4()))
     title: str = ""
     start_page: int = 1
@@ -54,13 +56,15 @@ class Segment:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     error_message: Optional[str] = None
-    
+
     @property
     def page_count(self) -> int:
         """Get the number of pages in this segment."""
         return self.end_page - self.start_page + 1
-    
-    def update_status(self, status: SegmentStatus, error_message: Optional[str] = None):
+
+    def update_status(
+        self, status: SegmentStatus, error_message: Optional[str] = None
+    ):
         """Update the status and timestamp."""
         self.status = status
         self.updated_at = datetime.now()
@@ -72,7 +76,7 @@ class Segment:
 class Document:
     """
     Represents a PDF document with its segments.
-    
+
     Attributes:
         document_id: Unique identifier for the document
         original_filename: Original filename of the PDF
@@ -85,6 +89,7 @@ class Document:
         created_at: Timestamp of creation
         updated_at: Timestamp of last update
     """
+
     document_id: str = field(default_factory=lambda: str(uuid4()))
     original_filename: str = ""
     file_path: Path = field(default_factory=Path)
@@ -95,17 +100,19 @@ class Document:
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
-    
+
     def add_segment(self, segment: Segment):
         """Add a segment to the document."""
         segment.parent_doc_id = self.document_id
         self.segments.append(segment)
         self.updated_at = datetime.now()
-    
+
     def get_segment(self, segment_id: str) -> Optional[Segment]:
         """Get a segment by ID."""
-        return next((s for s in self.segments if s.segment_id == segment_id), None)
-    
+        return next(
+            (s for s in self.segments if s.segment_id == segment_id), None
+        )
+
     @property
     def segment_count(self) -> int:
         """Get the total number of segments."""
