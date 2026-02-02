@@ -32,6 +32,9 @@ class MinerUExtractor(BaseExtractor):
         """
         super().__init__(config)
         self.mineru_config = config.mineru_config
+        self.extract_dir: Optional[Path] = (
+            None  # Store extraction directory path
+        )
 
         if not self.mineru_config.api_token:
             raise ValueError("MinerU API token not provided in configuration")
@@ -48,7 +51,9 @@ class MinerUExtractor(BaseExtractor):
         """
         return True
 
-    def extract(self, pdf_path: Path, segment: Optional[Segment] = None) -> str:
+    def extract(
+        self, pdf_path: Path, segment: Optional[Segment] = None
+    ) -> str:
         """
         Extract text from PDF using MinerU API.
 
@@ -96,11 +101,15 @@ class MinerUExtractor(BaseExtractor):
                 markdown = self._download_markdown(result)
                 markdown_dict[str(pdf_path)] = markdown
             else:
-                markdown_dict[str(pdf_path)] = f"Error: {result.get('err_msg', 'Unknown error')}"
+                markdown_dict[str(pdf_path)] = (
+                    f"Error: {result.get('err_msg', 'Unknown error')}"
+                )
 
         return markdown_dict
 
-    def _apply_upload_url(self, file_name: str, data_id: str) -> Dict[str, Any]:
+    def _apply_upload_url(
+        self, file_name: str, data_id: str
+    ) -> Dict[str, Any]:
         """
         Apply for upload URL for a single file.
 
@@ -141,7 +150,10 @@ class MinerUExtractor(BaseExtractor):
             "Authorization": f"Bearer {self.mineru_config.api_token}",
         }
         data = {
-            "files": [{"name": name, "data_id": f"pdf_{i}"} for i, name in enumerate(file_names)],
+            "files": [
+                {"name": name, "data_id": f"pdf_{i}"}
+                for i, name in enumerate(file_names)
+            ],
             "model_version": self.mineru_config.model_version,
         }
 
@@ -242,7 +254,9 @@ class MinerUExtractor(BaseExtractor):
         response.raise_for_status()
         return response.json()
 
-    def _wait_for_result(self, batch_id: str, poll_interval: int = 10) -> Dict[str, Any]:
+    def _wait_for_result(
+        self, batch_id: str, poll_interval: int = 10
+    ) -> Dict[str, Any]:
         """
         Wait for a single file to be processed.
 
@@ -257,7 +271,9 @@ class MinerUExtractor(BaseExtractor):
 
         while True:
             if time.time() - start_time > self.mineru_config.timeout:
-                raise TimeoutError(f"Processing timeout after {self.mineru_config.timeout}s")
+                raise TimeoutError(
+                    f"Processing timeout after {self.mineru_config.timeout}s"
+                )
 
             results = self._get_batch_results(batch_id)
 
@@ -291,14 +307,18 @@ class MinerUExtractor(BaseExtractor):
 
         while True:
             if time.time() - start_time > self.mineru_config.timeout:
-                raise TimeoutError(f"Processing timeout after {self.mineru_config.timeout}s")
+                raise TimeoutError(
+                    f"Processing timeout after {self.mineru_config.timeout}s"
+                )
 
             results = self._get_batch_results(batch_id)
 
             if results["code"] == 0:
                 extract_results = results["data"]["extract_result"]
                 # Check if all are done or failed
-                all_finished = all(r["state"] in ["done", "failed"] for r in extract_results)
+                all_finished = all(
+                    r["state"] in ["done", "failed"] for r in extract_results
+                )
                 if all_finished:
                     return extract_results
 
@@ -334,6 +354,9 @@ class MinerUExtractor(BaseExtractor):
         extract_dir = temp_zip.parent / result["data_id"]
         with zipfile.ZipFile(temp_zip, "r") as zip_ref:
             zip_ref.extractall(extract_dir)
+
+        # Store extraction directory path for later use
+        self.extract_dir = extract_dir
 
         # Find markdown file (typically named auto/output.md or similar)
         markdown_files = list(extract_dir.rglob("*.md"))

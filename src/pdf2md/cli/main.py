@@ -243,6 +243,7 @@ def convert(
             # If not explicitly requested, just don't register it
 
         # Extract markdown
+        extractor_used = None
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -250,6 +251,8 @@ def convert(
             console=console,
         ) as progress:
             task = progress.add_task("Extracting text...", total=None)
+            # Get the extractor that will be used
+            extractor_used = router.get_extractor(pdf_path)
             markdown = router.extract(pdf_path, segment)
             progress.update(task, completed=True)
 
@@ -268,9 +271,56 @@ def convert(
 
             console.print("[bold green]✓[/bold green] Markdown cleaned")
 
-        # Save output
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        output_file.write_text(markdown, encoding="utf-8")
+        # Handle MinerU-specific file organization
+        if (
+            isinstance(extractor_used, MinerUExtractor)
+            and extractor_used.extract_dir
+        ):
+            import shutil
+
+            extract_dir = extractor_used.extract_dir
+            # Get directory name (e.g., "pdf_vm-intro" from "outputs/pdf_vm-intro")
+            dir_name = extract_dir.name
+
+            # Default output paths
+            default_output_dir = Path(
+                r"C:\Users\Omni\Documents\LifeOS Pro\1. 项目\os"
+            )
+            default_images_dir = default_output_dir / "images"
+
+            # Find markdown file in extract directory
+            markdown_files = list(extract_dir.rglob("*.md"))
+            if markdown_files:
+                md_file = markdown_files[0]
+                # Rename and move markdown file
+                new_md_path = default_output_dir / f"{dir_name}.md"
+                default_output_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(md_file, new_md_path)
+                console.print(
+                    f"[bold green]✓[/bold green] Markdown saved to: {new_md_path}"
+                )
+
+            # Move images directory
+            images_dir = extract_dir / "images"
+            if images_dir.exists() and images_dir.is_dir():
+                default_images_dir.mkdir(parents=True, exist_ok=True)
+                # Copy all images
+                for img_file in images_dir.glob("*"):
+                    if img_file.is_file():
+                        shutil.copy2(
+                            img_file, default_images_dir / img_file.name
+                        )
+                console.print(
+                    f"[bold green]✓[/bold green] Images saved to: {default_images_dir}"
+                )
+
+            # Also save to the original output_file location for compatibility
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(markdown, encoding="utf-8")
+        else:
+            # Save output (non-MinerU or MinerU without extract_dir)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(markdown, encoding="utf-8")
 
         console.print(f"\n[bold green]✓ Conversion complete![/bold green]")
         console.print(f"[bold]Output:[/bold] {output_file}")

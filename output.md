@@ -1,226 +1,281 @@
-# Scheduling: Introduction
+# Free-Space Management
 
-By now low-level mechanisms of running processes (e.g., context switching) should be clear; if they are not, go back a chapter or two, and read the description of how that stuff works again. However, we have yet to understand the high-level policies that an OS scheduler employs. We will now do just that, presenting a series of scheduling policies (sometimes called disciplines) that various smart and hard-working people have developed over the years.
+In this chapter, we take a small detour from our discussion of virtualizing memory to discuss a fundamental aspect of any memory management system, whether it be a malloc library (managing pages of a process’s heap) or the OS itself (managing portions of the address space of a process). Specifically, we will discuss the issues surrounding free-space management.
 
-The origins of scheduling, in fact, predate computer systems; early approaches were taken from the field of operations management and applied to computers. This reality should be no surprise: assembly lines and many other human endeavors also require scheduling, and many of the same concerns exist therein, including a laser-like desire for efficiency. And thus, our problem:
+Let us make the problem more specific. Managing free space can certainly be easy, as we will see when we discuss the concept of paging. It is easy when the space you are managing is divided into fixed-sized units; in such a case, you just keep a list of these fixed-sized units; when a client requests one of them, return the first entry.
 
-# THE CRUX: HOW TO DEVELOP SCHEDULING POLICY
+Where free-space management becomes more difficult (and interesting) is when the free space you are managing consists of variable-sized units; this arises in a user-level memory-allocation library (as in malloc() and free()) and in an OS managing physical memory when using segmentation to implement virtual memory. In either case, the problem that exists is known as external fragmentation: the free space gets chopped into little pieces of different sizes and is thus fragmented; subsequent requests may fail because there is no single contiguous space that can satisfy the request, even though the total amount of free space exceeds the size of the request.
 
-How should we develop a basic framework for thinking about scheduling policies? What are the key assumptions? What metrics are important? What basic approaches have been used in the earliest of computer systems?
+<table><tr><td>free</td><td>used</td><td>free</td></tr><tr><td>0</td><td>10</td><td>20</td></tr></table>
 
-# 7.1 Workload Assumptions
+The figure shows an example of this problem. In this case, the total free space available is 20 bytes; unfortunately, it is fragmented into two chunks of size 10 each. As a result, a request for 15 bytes will fail even though there are 20 bytes free. And thus we arrive at the problem addressed in this chapter.
 
-Before getting into the range of possible policies, let us first make a number of simplifying assumptions about the processes running in the system, sometimes collectively called the workload. Determining the workload is a critical part of building policies, and the more you know about workload, the more fine-tuned your policy can be.
+# CRUX: HOW TO MANAGE FREE SPACE
 
-The workload assumptions we make here are mostly unrealistic, but that is alright (for now), because we will relax them as we go, and eventually develop what we will refer to as ... (dramatic pause) ...
+How should free space be managed, when satisfying variable-sized requests? What strategies can be used to minimize fragmentation? What are the time and space overheads of alternate approaches?
 
-a fully-operational scheduling discipline1.
+# 17.1 Assumptions
 
-We will make the following assumptions about the processes, sometimes called jobs, that are running in the system:
+Most of this discussion will focus on the great history of allocators found in user-level memory-allocation libraries. We draw on Wilson’s excellent survey $\left[ \mathsf { W } { + } 9 5 \right]$ but encourage interested readers to go to the source document itself for more details1.
 
-1. Each job runs for the same amount of time.
-2. All jobs arrive at the same time.
-3. Once started, each job runs to completion.
-4. All jobs only use the CPU (i.e., they perform no I/O)
-5. The run-time of each job is known.
+We assume a basic interface such as that provided by malloc() and free(). Specifically, void *malloc(size t size) takes a single parameter, size, which is the number of bytes requested by the application; it hands back a pointer (of no particular type, or a void pointer in C lingo) to a region of that size (or greater). The complementary routine void free(void *ptr) takes a pointer and frees the corresponding chunk. Note the implication of the interface: the user, when freeing the space, does not inform the library of its size; thus, the library must be able to figure out how big a chunk of memory is when handed just a pointer to it. We’ll discuss how to do this a bit later on in the chapter.
 
-We said many of these assumptions were unrealistic, but just as some animals are more equal than others in Orwell’s Animal Farm [O45], some assumptions are more unrealistic than others in this chapter. In particular, it might bother you that the run-time of each job is known: this would make the scheduler omniscient, which, although it would be great (probably), is not likely to happen anytime soon.
+The space that this library manages is known historically as the heap, and the generic data structure used to manage free space in the heap is some kind of free list. This structure contains references to all of the free chunks of space in the managed region of memory. Of course, this data structure need not be a list per se, but just some kind of data structure to track free space.
 
-# 7.2 Scheduling Metrics
+We further assume that primarily we are concerned with external fragmentation, as described above. Allocators could of course also have the problem of internal fragmentation; if an allocator hands out chunks of memory bigger than that requested, any unasked for (and thus unused) space in such a chunk is considered internal fragmentation (because the waste occurs inside the allocated unit) and is another example of space waste. However, for the sake of simplicity, and because it is the more interesting of the two types of fragmentation, we’ll mostly focus on external fragmentation.
 
-Beyond making workload assumptions, we also need one more thing to enable us to compare different scheduling policies: a scheduling metric. A metric is just something that we use to measure something, and there are a number of different metrics that make sense in scheduling.
+We’ll also assume that once memory is handed out to a client, it cannot be relocated to another location in memory. For example, if a program calls malloc() and is given a pointer to some space within the heap, that memory region is essentially “owned” by the program (and cannot be moved by the library) until the program returns it via a corresponding call to free(). Thus, no compaction of free space is possible, which
 
-For now, however, let us also simplify our life by simply having a single metric: turnaround time. The turnaround time of a job is defined as the time at which the job completes minus the time at which the job arrived in the system. More formally, the turnaround time $T _ { t u r n a r o u n d }$ is:
+would be useful to combat fragmentation2. Compaction could, however, be used in the OS to deal with fragmentation when implementing segmentation (as discussed in said chapter on segmentation).
 
-$$
-T _ {\text {t u r n a r o u n d}} = T _ {\text {c o m p l e t i o n}} - T _ {\text {a r r i v a l}} \tag {7.1}
-$$
+Finally, we’ll assume that the allocator manages a contiguous region of bytes. In some cases, an allocator could ask for that region to grow; for example, a user-level memory-allocation library might call into the kernel to grow the heap (via a system call such as sbrk) when it runs out of space. However, for simplicity, we’ll just assume that the region is a single fixed size throughout its life.
 
-Because we have assumed that all jobs arrive at the same time, for now $T _ { a r r i v a l } = 0$ and hence $T _ { t u r n a r o u n d } \stackrel { \cdot } { = } T _ { c o m p l e t i o n }$ . This fact will change as we relax the aforementioned assumptions.
+# 17.2 Low-level Mechanisms
 
-You should note that turnaround time is a performance metric, which will be our primary focus this chapter. Another metric of interest is fairness, as measured (for example) by Jain’s Fairness Index [J91]. Performance and fairness are often at odds in scheduling; a scheduler, for example, may optimize performance but at the cost of preventing a few jobs from running, thus decreasing fairness. This conundrum shows us that life isn’t always perfect.
+Before delving into some policy details, we’ll first cover some common mechanisms used in most allocators. First, we’ll discuss the basics of splitting and coalescing, common techniques in most any allocator. Second, we’ll show how one can track the size of allocated regions quickly and with relative ease. Finally, we’ll discuss how to build a simple list inside the free space to keep track of what is free and what isn’t.
 
-# 7.3 First In, First Out (FIFO)
+# Splitting and Coalescing
 
-The most basic algorithm we can implement is known as First In, First Out (FIFO) scheduling or sometimes First Come, First Served (FCFS).
+A free list contains a set of elements that describe the free space still remaining in the heap. Thus, assume the following 30-byte heap:
 
-FIFO has a number of positive properties: it is clearly simple and thus easy to implement. And, given our assumptions, it works pretty well.
+<table><tr><td>free</td><td>used</td><td>free</td></tr><tr><td>0</td><td>10</td><td>20</td></tr></table>
 
-Let’s do a quick example together. Imagine three jobs arrive in the system, A, B, and C, at roughly the same time $( T _ { a r r i v a l } = 0 ) $ ). Because FIFO has to put some job first, let’s assume that while they all arrived simultaneously, A arrived just a hair before B which arrived just a hair before C. Assume also that each job runs for 10 seconds. What will the average turnaround time be for these jobs?
+The free list for this heap would have two elements on it. One entry describes the first 10-byte free segment (bytes 0-9), and one entry describes the other free segment (bytes 20-29):
 
-![](images/2d7b16e79a43c68eb96f632f9e9731238ce7bea02d27d0cd9e7ab1239165d29a.jpg)
-Figure 7.1: FIFO Simple Example
+![](images/25164270d2ca7217f7b43908f18ccf98d4018f9074dead3fe02ca66adb03cdf3.jpg)
 
-From Figure 7.1, you can see that A finished at 10, B at 20, and C at 30. Thus, the average turnaround time for the three jobs is simply $\textstyle { \frac { 1 0 + 2 0 + 3 0 } { 3 } } =$ 20. Computing turnaround time is as easy as that.
+As described above, a request for anything greater than 10 bytes will fail (returning NULL); there just isn’t a single contiguous chunk of memory of that size available. A request for exactly that size (10 bytes) could be satisfied easily by either of the free chunks. But what happens if the request is for something smaller than 10 bytes?
 
-Now let’s relax one of our assumptions. In particular, let’s relax assumption 1, and thus no longer assume that each job runs for the same amount of time. How does FIFO perform now? What kind of workload could you construct to make FIFO perform poorly?
+Assume we have a request for just a single byte of memory. In this case, the allocator will perform an action known as splitting: it will find
 
-(think about this before reading on ... keep thinking ... got it?!)
+a free chunk of memory that can satisfy the request and split it into two. The first chunk it will return to the caller; the second chunk will remain on the list. Thus, in our example above, if a request for 1 byte were made, and the allocator decided to use the second of the two elements on the list to satisfy the request, the call to malloc() would return 20 (the address of the 1-byte allocated region) and the list would end up looking like this:
 
-Presumably you’ve figured this out by now, but just in case, let’s do an example to show how jobs of different lengths can lead to trouble for FIFO scheduling. In particular, let’s again assume three jobs (A, B, and C), but this time A runs for 100 seconds while B and C run for 10 each.
+![](images/5626e6ec7c880a764c419e7d3c9559af33516393a1dd1f1c5f710c79b63cf4f9.jpg)
 
-![](images/459f8057fe9a6d6cc78ae0f7af914b22020b791b8745213bf96e0d4d8175c3c4.jpg)
-Figure 7.2: Why FIFO Is Not That Great
+In the picture, you can see the list basically stays intact; the only change is that the free region now starts at 21 instead of 20, and the length of that free region is now just $9 ^ { 3 }$ . Thus, the split is commonly used in allocators when requests are smaller than the size of any particular free chunk.
 
-As you can see in Figure 7.2, Job A runs first for the full 100 seconds before B or C even get a chance to run. Thus, the average turnaround time for the system is high: a painful 110 seconds $\begin{array} { r } { \frac { \prime } { 3 } \frac { 1 0 0 + 1 1 0 + 1 2 0 } { 3 } = 1 1 0 } \end{array}$ ).
+A corollary mechanism found in many allocators is known as coalescing of free space. Take our example from above once more (free 10 bytes, used 10 bytes, and another free 10 bytes).
 
-This problem is generally referred to as the convoy effect $\mathrm { [ B + 7 9 ] }$ , where a number of relatively-short potential consumers of a resource get queued
+Given this (tiny) heap, what happens when an application calls free(10), thus returning the space in the middle of the heap? If we simply add this free space back into our list without too much thinking, we might end up with a list that looks like this:
 
-# TIP: THE PRINCIPLE OF SJF
+![](images/52087ea294c44560b393b976db618ecc78d1474c6abd1e3af200d0e41905a371.jpg)
 
-Shortest Job First represents a general scheduling principle that can be applied to any system where the perceived turnaround time per customer (or, in our case, a job) matters. Think of any line you have waited in: if the establishment in question cares about customer satisfaction, it is likely they have taken SJF into account. For example, grocery stores commonly have a “ten-items-or-less” line to ensure that shoppers with only a few things to purchase don’t get stuck behind the family preparing for some upcoming nuclear winter.
+Note the problem: while the entire heap is now free, it is seemingly divided into three chunks of 10 bytes each. Thus, if a user requests 20 bytes, a simple list traversal will not find such a free chunk, and return failure.
 
-behind a heavyweight resource consumer. This scheduling scenario might remind you of a single line at a grocery store and what you feel like when you see the person in front of you with three carts full of provisions and a checkbook out; it’s going to be a while2.
+What allocators do in order to avoid this problem is coalesce free space when a chunk of memory is freed. The idea is simple: when returning a free chunk in memory, look carefully at the addresses of the chunk you are returning as well as the nearby chunks of free space; if the newlyfreed space sits right next to one (or two, as in this example) existing free chunks, merge them into a single larger free chunk. Thus, with coalescing, our final list should look like this:
 
-So what should we do? How can we develop a better algorithm to deal with our new reality of jobs that run for different amounts of time? Think about it first; then read on.
+![](images/01b29a7447774f28f13e18f5865b8b9569dbaaea1123610a3815690103c0f223.jpg)
 
-# 7.4 Shortest Job First (SJF)
+Indeed, this is what the heap list looked like at first, before any allocations were made. With coalescing, an allocator can better ensure that large free extents are available for the application.
 
-It turns out that a very simple approach solves this problem; in fact it is an idea stolen from operations research [C54,PV56] and applied to scheduling of jobs in computer systems. This new scheduling discipline is known as Shortest Job First (SJF), and the name should be easy to remember because it describes the policy quite completely: it runs the shortest job first, then the next shortest, and so on.
+![](images/880e22e9abd9aef1f93d24ce04c5ced2239a711ee1e43b729ce8d5342205107a.jpg)
+Figure 17.1: An Allocated Region Plus Header
 
-![](images/9104507b1483bd5bcc1d6af51cd1d319257034ac53dc76eef8f6ef21618112bc.jpg)
-Figure 7.3: SJF Simple Example
+![](images/3b299abcf128d2c90b39066847c28b41bbe19d634b8ac9fe4365a513b272ccfa.jpg)
+Figure 17.2: Specific Contents Of The Header
 
-Let’s take our example above but with SJF as our scheduling policy. Figure 7.3 shows the results of running A, B, and C. Hopefully the diagram makes it clear why SJF performs much better with regards to average turnaround time. Simply by running B and C before A, SJF reduces average turnaround from 110 seconds to 50 ( $\textstyle { \frac { 1 0 + 2 0 + 1 2 0 } { 3 } } = 5 0$ ), more than a factor of two improvement.
+# Tracking The Size Of Allocated Regions
 
-# ASIDE: PREEMPTIVE SCHEDULERS
+You might have noticed that the interface to free(void *ptr) does not take a size parameter; thus it is assumed that given a pointer, the malloc library can quickly determine the size of the region of memory being freed and thus incorporate the space back into the free list.
 
-In the old days of batch computing, a number of non-preemptive schedulers were developed; such systems would run each job to completion before considering whether to run a new job. Virtually all modern schedulers are preemptive, and quite willing to stop one process from running in order to run another. This implies that the scheduler employs the mechanisms we learned about previously; in particular, the scheduler can perform a context switch, stopping one running process temporarily and resuming (or starting) another.
+To accomplish this task, most allocators store a little bit of extra information in a header block which is kept in memory, usually just before the handed-out chunk of memory. Let’s look at an example again (Figure 17.1). In this example, we are examining an allocated block of size 20 bytes, pointed to by ptr; imagine the user called malloc() and stored the results in ptr, e.g., ptr $=$ malloc(20);.
 
-In fact, given our assumptions about jobs all arriving at the same time, we could prove that SJF is indeed an optimal scheduling algorithm. However, you are in a systems class, not theory or operations research; no proofs are allowed.
+The header minimally contains the size of the allocated region (in this case, 20); it may also contain additional pointers to speed up deallocation, a magic number to provide additional integrity checking, and other information. Let’s assume a simple header which contains the size of the region and a magic number, like this:
 
-Thus we arrive upon a good approach to scheduling with SJF, but our assumptions are still fairly unrealistic. Let’s relax another. In particular, we can target assumption 2, and now assume that jobs can arrive at any time instead of all at once. What problems does this lead to?
+```txt
+typedef struct { int size; int magic; } header_t;
+```
 
-(Another pause to think ... are you thinking? Come on, you can do it)
+The example above would look like what you see in Figure 17.2. When the user calls free(ptr), the library then uses simple pointer arithmetic to figure out where the header begins:
 
-Here we can illustrate the problem again with an example. This time, assume A arrives at $t = 0$ and needs to run for 100 seconds, whereas B and C arrive at $t = 1 0$ and each need to run for 10 seconds. With pure SJF, we’d get the schedule seen in Figure 7.4.
+void free(void \*ptr) { header_t \*hptr $=$ (header_t \*) ptr - 1;
 
-![](images/e444049c0411651d7da28bbe221c64c607dd6365fdc46a23fad52d3d593e15c1.jpg)
-Figure 7.4: SJF With Late Arrivals From B and C
+After obtaining such a pointer to the header, the library can easily determine whether the magic number matches the expected value as a sanity check (assert(hptr->magic $\scriptstyle = = { \begin{array} { l } { 1 2 3 4 5 6 7 } \end{array} }$ )) and calculate the total size of the newly-freed region via simple math (i.e., adding the size of the header to size of the region). Note the small but critical detail in the last sentence: the size of the free region is the size of the header plus the size of the space allocated to the user. Thus, when a user requests $N$ bytes of memory, the library does not search for a free chunk of size $N$ ; rather, it searches for a free chunk of size $N$ plus the size of the header.
 
-As you can see from the figure, even though B and C arrived shortly after A, they still are forced to wait until A has completed, and thus suffer the same convoy problem. Average turnaround time for these three jobs is 103.33 seconds $\mathrm { \langle } \frac { 1 0 0 + ( 1 1 0 - 1 0 ) + ( 1 \bar { 2 } 0 - 1 0 ) } { 3 }$ ). What can a scheduler do?
+# Embedding A Free List
 
-# 7.5 Shortest Time-to-Completion First (STCF)
+Thus far we have treated our simple free list as a conceptual entity; it is just a list describing the free chunks of memory in the heap. But how do we build such a list inside the free space itself?
 
-To address this concern, we need to relax assumption 3 (that jobs must run to completion), so let’s do that. We also need some machinery within the scheduler itself. As you might have guessed, given our previous discussion about timer interrupts and context switching, the scheduler can
+In a more typical list, when allocating a new node, you would just call malloc() when you need space for the node. Unfortunately, within the memory-allocation library, you can’t do this! Instead, you need to build the list inside the free space itself. Don’t worry if this sounds a little weird; it is, but not so weird that you can’t do it!
 
-![](images/81cacbfa10db6452cc481bb7d423643aed8ccf4161ed46b5eb67e66955ecb50b.jpg)
-Figure 7.5: STCF Simple Example
+Assume we have a 4096-byte chunk of memory to manage (i.e., the heap is 4KB). To manage this as a free list, we first have to initialize said list; initially, the list should have one entry, of size 4096 (minus the header size). Here is the description of a node of the list:
 
-certainly do something else when B and C arrive: it can preempt job A and decide to run another job, perhaps continuing A later. SJF by our definition is a non-preemptive scheduler, and thus suffers from the problems described above.
+```txt
+typedef struct __node_t{ int size; struct __node_t \*next; } node_t;
+```
 
-Fortunately, there is a scheduler which does exactly that: add preemption to SJF, known as the Shortest Time-to-Completion First (STCF) or Preemptive Shortest Job First (PSJF) scheduler [CK68]. Any time a new job enters the system, the STCF scheduler determines which of the remaining jobs (including the new job) has the least time left, and schedules that one. Thus, in our example, STCF would preempt A and run B and C to completion; only when they are finished would A’s remaining time be scheduled. Figure 7.5 shows an example.
+Now let’s look at some code that initializes the heap and puts the first element of the free list inside that space. We are assuming that the heap is built within some free space acquired via a call to the system call mmap(); this is not the only way to build such a heap but serves us well in this example. Here is the code:
 
-The result is a much-improved average turnaround time: 50 seconds ( (120−0)+(20−10)+(30−10) ). And as before, given our new assumptions, $\big ( \frac { ( 1 2 0 - 0 ) + ( 2 0 - 1 0 ) + ( 3 0 - 1 0 ) } { 3 } \big )$ 3STCF is provably optimal; given that SJF is optimal if all jobs arrive at the same time, you should probably be able to see the intuition behind the optimality of STCF.
+```c
+// mmap() returns a pointer to a chunk of free space
+node_t *head = mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0);
+head->size = 4096 - sizeof(node_t);
+head->next = NULL;
+```
 
-# 7.6 A New Metric: Response Time
+```txt
+OPERATING SYSTEMS [VERSION 1.10]
+```
 
-Thus, if we knew job lengths, and that jobs only used the CPU, and our only metric was turnaround time, STCF would be a great policy. In fact, for a number of early batch computing systems, these types of scheduling algorithms made some sense. However, the introduction of time-shared machines changed all that. Now users would sit at a terminal and demand interactive performance from the system as well. And thus, a new metric was born: response time.
+![](images/d635f3228c746f10b54909fa74a3422e963c76fe96bb53b7c92d26ff5edf1f51.jpg)
+Figure 17.3: A Heap With One Free Chunk
 
-We define response time as the time from when the job arrives in a system to the first time it is scheduled3. More formally:
+![](images/cedf3de870d4b52da54695dbfa79b962a9f2314292380c0e89ed40a3ddfb9513.jpg)
+Figure 17.4: A Heap: After One Allocation
 
-$$
-T _ {\text {r e s p o n s e}} = T _ {\text {f i r s t r u n}} - T _ {\text {a r r i v a l}} \tag {7.2}
-$$
+After running this code, the status of the list is that it has a single entry, of size 4088. Yes, this is a tiny heap, but it serves as a fine example for us here. The head pointer contains the beginning address of this range; let’s assume it is 16KB (though any virtual address would be fine). Visually, the heap thus looks like what you see in Figure 17.3.
 
-![](images/a9652e278f0a8400272e8e992f23d8c2c9006e174da81d984d37e620cbc88a96.jpg)
-Figure 7.6: SJF Again (Bad for Response Time)
+Now, let’s imagine that a chunk of memory is requested, say of size 100 bytes. To service this request, the library will first find a chunk that is large enough to accommodate the request; because there is only one free chunk (size: 4088), this chunk will be chosen. Then, the chunk will be split into two: one chunk big enough to service the request (and header, as described above), and the remaining free chunk. Assuming an 8-byte header (an integer size and an integer magic number), the space in the heap now looks like what you see in Figure 17.4.
 
-![](images/2f598cbedbcc2ee3b707d2a7c35d84b633b6383d43b802ea2fcc87c071bb4c14.jpg)
-Figure 7.7: Round Robin (Good For Response Time)
+Thus, upon the request for 100 bytes, the library allocated 108 bytes
 
-For example, if we had the schedule from Figure 7.5 (with A arriving at time 0, and B and C at time 10), the response time of each job is as follows: 0 for job A, 0 for B, and 10 for C (average: 3.33).
+![](images/4c3a6da55760a994535894387ccb8a18cc88785e7b0142c3be3df511070b73ba.jpg)
+Figure 17.5: Free Space With Three Chunks Allocated
 
-As you might be thinking, STCF and related disciplines are not particularly good for response time. If three jobs arrive at the same time, for example, the third job has to wait for the previous two jobs to run in their entirety before being scheduled just once. While great for turnaround time, this approach is quite bad for response time and interactivity. Indeed, imagine sitting at a terminal, typing, and having to wait 10 seconds to see a response from the system just because some other job got scheduled in front of yours: not too pleasant.
+out of the existing one free chunk, returns a pointer (marked ptr in the figure above) to it, stashes the header information immediately before the allocated space for later use upon free(), and shrinks the one free node in the list to 3980 bytes (4088 minus 108).
 
-Thus, we are left with another problem: how can we build a scheduler that is sensitive to response time?
+Now let’s look at the heap when there are three allocated regions, each of 100 bytes (or 108 including the header). A visualization of this heap is shown in Figure 17.5.
 
-# 7.7 Round Robin
+As you can see therein, the first 324 bytes of the heap are now allocated, and thus we see three headers in that space as well as three 100- byte regions being used by the calling program. The free list remains uninteresting: just a single node (pointed to by head), but now only 3764
 
-To solve this problem, we will introduce a new scheduling algorithm, classically referred to as Round-Robin (RR) scheduling [K64]. The basic idea is simple: instead of running jobs to completion, RR runs a job for a time slice (sometimes called a scheduling quantum) and then switches to the next job in the run queue. It repeatedly does so until the jobs are finished. For this reason, RR is sometimes called time-slicing. Note that the length of a time slice must be a multiple of the timer-interrupt period; thus if the timer interrupts every 10 milliseconds, the time slice could be 10, 20, or any other multiple of 10 ms.
+![](images/b0a42a5c41e579110d3480b307311180ac8e731e46607fed567d140271f80d50.jpg)
+Figure 17.6: Free Space With Two Chunks Allocated
 
-To understand RR in more detail, let’s look at an example. Assume three jobs A, B, and C arrive at the same time in the system, and that
+bytes in size after the three splits. But what happens when the calling program returns some memory via free()?
 
-# TIP: AMORTIZATION CAN REDUCE COSTS
+In this example, the application returns the middle chunk of allocated memory, by calling free(16500) (the value 16500 is arrived upon by adding the start of the memory region, 16384, to the 108 of the previous chunk and the 8 bytes of the header for this chunk). This value is shown in the previous diagram by the pointer sptr.
 
-The general technique of amortization is commonly used in systems when there is a fixed cost to some operation. By incurring that cost less often (i.e., by performing the operation fewer times), the total cost to the system is reduced. For example, if the time slice is set to $1 0 ~ \mathrm { m } s ,$ , and the context-switch cost is $1 \mathrm { m s }$ , roughly $1 0 \%$ of time is spent context switching and is thus wasted. If we want to amortize this cost, we can increase the time slice, e.g., to 100 ms. In this case, less than $1 \%$ of time is spent context switching, and thus the cost of time-slicing has been amortized.
+The library immediately figures out the size of the free region, and then adds the free chunk back onto the free list. Assuming we insert at the head of the free list, the space now looks like this (Figure 17.6).
 
-they each wish to run for 5 seconds. An SJF scheduler runs each job to completion before running another (Figure 7.6). In contrast, RR with a time-slice of 1 second would cycle through the jobs quickly (Figure 7.7).
+![](images/a3fec8b97d37f7510f48b40489d557df204d6e10286139c9b3b49a7d1da17c8c.jpg)
+Figure 17.7: A Non-Coalesced Free List
 
-The average response time of RR is: 0+1+2 = 1; for SJF, average re- $\textstyle { \frac { 0 + 1 + 2 } { 3 } } \ = \ 1$ sponse time is : 0+5+10 = 5. ${ \frac { 0 + 5 + 1 0 } { 3 } } = 5$
+Now we have a list that starts with a small free chunk (100 bytes, pointed to by the head of the list) and a large free chunk (3764 bytes). Our list finally has more than one element on it! And yes, the free space is fragmented, an unfortunate but common occurrence.
 
-As you can see, the length of the time slice is critical for RR. The shorter it is, the better the performance of RR under the response-time metric. However, making the time slice too short is problematic: suddenly the cost of context switching will dominate overall performance. Thus, deciding on the length of the time slice presents a trade-off to a system designer, making it long enough to amortize the cost of switching without making it so long that the system is no longer responsive.
+One last example: let’s assume now that the last two in-use chunks are freed. Without coalescing, you end up with fragmentation (Figure 17.7).
 
-Note that the cost of context switching does not arise solely from the OS actions of saving and restoring a few registers. When programs run, they build up a great deal of state in CPU caches, TLBs, branch predictors, and other on-chip hardware. Switching to another job causes this state to be flushed and new state relevant to the currently-running job to be brought in, which may exact a noticeable performance cost [MB91].
+As you can see from the figure, we now have a big mess! Why? Simple, we forgot to coalesce the list. Although all of the memory is free, it is chopped up into pieces, thus appearing as a fragmented memory despite not being one. The solution is simple: go through the list and merge neighboring chunks; when finished, the heap will be whole again.
 
-RR, with a reasonable time slice, is thus an excellent scheduler if response time is our only metric. But what about our old friend turnaround time? Let’s look at our example above again. A, B, and C, each with running times of 5 seconds, arrive at the same time, and RR is the scheduler with a (long) 1-second time slice. We can see from the picture above that A finishes at 13, B at 14, and C at 15, for an average of 14. Pretty awful!
+# Growing The Heap
 
-It is not surprising, then, that RR is indeed one of the worst policies if turnaround time is our metric. Intuitively, this should make sense: what RR is doing is stretching out each job as long as it can, by only running each job for a short bit before moving to the next. Because turnaround time only cares about when jobs finish, RR is nearly pessimal, even worse than simple FIFO in many cases.
+We should discuss one last mechanism found within many allocation libraries. Specifically, what should you do if the heap runs out of space? The simplest approach is just to fail. In some cases this is the only option, and thus returning NULL is an honorable approach. Don’t feel bad! You tried, and though you failed, you fought the good fight.
 
-More generally, any policy (such as RR) that is fair, i.e., that evenly divides the CPU among active processes on a small time scale, will perform poorly on metrics such as turnaround time. Indeed, this is an inherent trade-off: if you are willing to be unfair, you can run shorter jobs to completion, but at the cost of response time; if you instead value fairness,
+Most traditional allocators start with a small-sized heap and then request more memory from the OS when they run out. Typically, this means they make some kind of system call (e.g., sbrk in most UNIX systems) to grow the heap, and then allocate the new chunks from there. To service the sbrk request, the OS finds free physical pages, maps them into the address space of the requesting process, and then returns the value of the end of the new heap; at that point, a larger heap is available, and the request can be successfully serviced.
 
-# TIP: OVERLAP ENABLES HIGHER UTILIZATION
+# 17.3 Basic Strategies
 
-When possible, overlap operations to maximize the utilization of systems. Overlap is useful in many different domains, including when performing disk I/O or sending messages to remote machines; in either case, starting the operation and then switching to other work is a good idea, and improves the overall utilization and efficiency of the system.
+Now that we have some machinery under our belt, let’s go over some basic strategies for managing free space. These approaches are mostly based on pretty simple policies that you could think up yourself; try it before reading and see if you come up with all of the alternatives (or maybe some new ones!).
 
-response time is lowered, but at the cost of turnaround time. This type of trade-off is common in systems; you can’t have your cake and eat it too4.
+The ideal allocator is both fast and minimizes fragmentation. Unfortunately, because the stream of allocation and free requests can be arbitrary (after all, they are determined by the programmer), any particular strategy can do quite badly given the wrong set of inputs. Thus, we will not describe a “best” approach, but rather talk about some basics and discuss their pros and cons.
 
-We have developed two types of schedulers. The first type (SJF, STCF) optimizes turnaround time, but is bad for response time. The second type (RR) optimizes response time but is bad for turnaround. And we still have two assumptions which need to be relaxed: assumption 4 (that jobs do no I/O), and assumption 5 (that the run-time of each job is known). Let’s tackle those assumptions next.
+# Best Fit
 
-# 7.8 Incorporating I/O
+The best fit strategy is quite simple: first, search through the free list and find chunks of free memory that are as big or bigger than the requested size. Then, return the one that is the smallest in that group of candidates; this is the so called best-fit chunk (it could be called smallest fit too). One pass through the free list is enough to find the correct block to return.
 
-First we will relax assumption 4 — of course all programs perform I/O. Imagine a program that didn’t take any input: it would produce the same output each time. Imagine one without output: it is the proverbial tree falling in the forest, with no one to see it; it doesn’t matter that it ran.
+The intuition behind best fit is simple: by returning a block that is close to what the user asks, best fit tries to reduce wasted space. However, there is a cost; naive implementations pay a heavy performance penalty when performing an exhaustive search for the correct free block.
 
-A scheduler clearly has a decision to make when a job initiates an I/O request, because the currently-running job won’t be using the CPU during the I/O; it is blocked waiting for I/O completion. If the I/O is sent to a hard disk drive, the process might be blocked for a few milliseconds or longer, depending on the current I/O load of the drive. Thus, the scheduler should probably schedule another job on the CPU at that time.
+# Worst Fit
 
-The scheduler also has to make a decision when the I/O completes. When that occurs, an interrupt is raised, and the OS runs and moves the process that issued the I/O from blocked back to the ready state. Of course, it could even decide to run the job at that point. How should the OS treat each job?
+The worst fit approach is the opposite of best fit; find the largest chunk and return the requested amount; keep the remaining (large) chunk on the free list. Worst fit tries to thus leave big chunks free instead of lots of
 
-To understand this issue better, let us assume we have two jobs, A and $\scriptstyle \mathrm { \mathrm { B } , }$ which each need 50 ms of CPU time. However, there is one obvious difference: A runs for 10 ms and then issues an I/O request (assume here that I/Os each take $1 0 \mathrm { m s }$ ), whereas B simply uses the CPU for 50 ms and performs no I/O. The scheduler runs A first, then B after (Figure 7.8).
+small chunks that can arise from a best-fit approach. Once again, however, a full search of free space is required, and thus this approach can be costly. Worse, most studies show that it performs badly, leading to excess fragmentation while still having high overheads.
 
-Assume we are trying to build a STCF scheduler. How should such a scheduler account for the fact that A is broken up into 5 10-ms sub-jobs,
+# First Fit
 
-![](images/ab95758349e9ff87ba978321237db810196e1848c5ecf7f6e0727a233999369c.jpg)
-Figure 7.8: Poor Use Of Resources
+The first fit method simply finds the first block that is big enough and returns the requested amount to the user. As before, the remaining free space is kept free for subsequent requests.
 
-![](images/fe0aaaf782606d243413451bb093b1990ebad6dddf4220cd8dd29308b9aca2ca.jpg)
-Figure 7.9: Overlap Allows Better Use Of Resources
+First fit has the advantage of speed — no exhaustive search of all the free spaces are necessary — but sometimes pollutes the beginning of the free list with small objects. Thus, how the allocator manages the free list’s order becomes an issue. One approach is to use address-based ordering; by keeping the list ordered by the address of the free space, coalescing becomes easier, and fragmentation tends to be reduced.
 
-whereas B is just a single 50-ms CPU demand? Clearly, just running one job and then the other without considering how to take I/O into account makes little sense.
+# Next Fit
 
-A common approach is to treat each 10-ms sub-job of A as an independent job. Thus, when the system starts, its choice is whether to schedule a 10-ms A or a 50-ms B. With STCF, the choice is clear: choose the shorter one, in this case A. Then, when the first sub-job of A has completed, only B is left, and it begins running. Then a new sub-job of A is submitted, and it preempts B and runs for 10 ms. Doing so allows for overlap, with the CPU being used by one process while waiting for the I/O of another process to complete; the system is thus better utilized (see Figure 7.9).
+Instead of always beginning the first-fit search at the beginning of the list, the next fit algorithm keeps an extra pointer to the location within the list where one was looking last. The idea is to spread the searches for free space throughout the list more uniformly, thus avoiding splintering of the beginning of the list. The performance of such an approach is quite similar to first fit, as an exhaustive search is once again avoided.
 
-And thus we see how a scheduler might incorporate I/O. By treating each CPU burst as a job, the scheduler makes sure processes that are “interactive” get run frequently. While those interactive jobs are performing I/O, other CPU-intensive jobs run, thus better utilizing the processor.
+# Examples
 
-# 7.9 No More Oracle
+Here are a few examples of the above strategies. Envision a free list with three elements on it, of sizes 10, 30, and 20 (we’ll ignore headers and other details here, instead just focusing on how strategies operate):
 
-With a basic approach to I/O in place, we come to our final assumption: that the scheduler knows the length of each job. As we said before, this is likely the worst assumption we could make. In fact, in a generalpurpose OS (like the ones we care about), the OS usually knows very little about the length of each job. Thus, how can we build an approach that behaves like SJF/STCF without such a priori knowledge? Further, how can we incorporate some of the ideas we have seen with the RR scheduler so that response time is also quite good?
+![](images/2b03260a5761b7af4e2231ea95356d36d32eabd88a81789ec8f8ae827765a4b9.jpg)
 
-# 7.10 Summary
+Assume an allocation request of size 15. A best-fit approach would search the entire list and find that 20 was the best fit, as it is the smallest free space that can accommodate the request. The resulting free list:
 
-We have introduced the basic ideas behind scheduling and developed two families of approaches. The first runs the shortest job remaining and thus optimizes turnaround time; the second alternates between all jobs and thus optimizes response time. Both are bad where the other is good, alas, an inherent trade-off common in systems. We have also seen how we might incorporate I/O into the picture, but have still not solved the problem of the fundamental inability of the OS to see into the future. Shortly, we will see how to overcome this problem, by building a scheduler that uses the recent past to predict the future. This scheduler is known as the multi-level feedback queue, and it is the topic of the next chapter.
+![](images/8fa666c20b6e3d50154c251b7ce1f4352b82ec3c536052e2d6702ab72d581b4f.jpg)
+
+As happens in this example, and often happens with a best-fit approach, a small free chunk is now left over. A worst-fit approach is similar but instead finds the largest chunk, in this example 30. The resulting list:
+
+![](images/556e2637f81ef182a1efd4843229527ed5ed5ddccaaca3717e66679a98ac148f.jpg)
+
+The first-fit strategy, in this example, does the same thing as worst-fit, also finding the first free block that can satisfy the request. The difference is in the search cost; both best-fit and worst-fit look through the entire list; first-fit only examines free chunks until it finds one that fits, thus reducing search cost.
+
+These examples just scratch the surface of allocation policies. More detailed analysis with real workloads and more complex allocator behaviors (e.g., coalescing) are required for a deeper understanding. Perhaps something for a homework section, you say?
+
+# 17.4 Other Approaches
+
+Beyond the basic approaches described above, there have been a host of suggested techniques and algorithms to improve memory allocation in some way. We list a few of them here for your consideration (i.e., to make you think about a little more than just best-fit allocation).
+
+# Segregated Lists
+
+One interesting approach that has been around for some time is the use of segregated lists. The basic idea is simple: if a particular application has one (or a few) popular-sized request that it makes, keep a separate list just to manage objects of that size; all other requests are forwarded to a more general memory allocator.
+
+The benefits of such an approach are obvious. By having a chunk of memory dedicated for one particular size of requests, fragmentation is much less of a concern; moreover, allocation and free requests can be served quite quickly when they are of the right size, as no complicated search of a list is required.
+
+Just like any good idea, this approach introduces new complications into a system as well. For example, how much memory should one dedicate to the pool of memory that serves specialized requests of a given size, as opposed to the general pool? One particular allocator, the slab allocator by uber-engineer Jeff Bonwick (which was designed for use in the Solaris kernel), handles this issue in a rather nice way [B94].
+
+Specifically, when the kernel boots up, it allocates a number of object caches for kernel objects that are likely to be requested frequently (such as locks, file-system inodes, etc.); the object caches thus are each segregated free lists of a given size and serve memory allocation and free requests quickly. When a given cache is running low on free space, it requests some slabs of memory from a more general memory allocator (the total amount requested being a multiple of the page size and the object in question). Conversely, when the reference counts of the objects within a given slab all go to zero, the general allocator can reclaim them from the specialized allocator, which is often done when the VM system needs more memory.
+
+# ASIDE: GREAT ENGINEERS ARE REALLY GREAT
+
+Engineers like Jeff Bonwick (who not only wrote the slab allocator mentioned herein but also was the lead of an amazing file system, ZFS) are the heart of Silicon Valley. Behind almost any great product or technology is a human (or small group of humans) who are way above average in their talents, abilities, and dedication. As Mark Zuckerberg (of Facebook) says: “Someone who is exceptional in their role is not just a little better than someone who is pretty good. They are 100 times better.” This is why, still today, one or two people can start a company that changes the face of the world forever (think Google, Apple, or Facebook). Work hard and you might become such a $" 1 0 0 \mathrm { x } ^ { \prime \prime }$ person as well! Failing that, find a way to work with such a person; you’ll learn more in a day than most learn in a month.
+
+The slab allocator also goes beyond most segregated list approaches by keeping free objects on the lists in a pre-initialized state. Bonwick shows that initialization and destruction of data structures is costly [B94]; by keeping freed objects in a particular list in their initialized state, the slab allocator thus avoids frequent initialization and destruction cycles per object and thus lowers overheads noticeably.
+
+# Buddy Allocation
+
+Because coalescing is critical for an allocator, some approaches have been designed around making coalescing simple. One good example is found in the binary buddy allocator [K65].
+
+In such a system, free memory is first conceptually thought of as one big space of size $2 ^ { N }$ . When a request for memory is made, the search for free space recursively divides free space by two until a block that is big enough to accommodate the request is found (and a further split into two would result in a space that is too small). At this point, the requested block is returned to the user. Here is an example of a 64KB free space getting divided in the search for a 7KB block (Figure 17.8, page 15).
+
+In the example, the leftmost 8KB block is allocated (as indicated by the darker shade of gray) and returned to the user; note that this scheme can suffer from internal fragmentation, as you are only allowed to give out power-of-two-sized blocks.
+
+The beauty of buddy allocation is found in what happens when that block is freed. When returning the 8KB block to the free list, the allocator checks whether the “buddy” 8KB is free; if so, it coalesces the two blocks into a 16KB block. The allocator then checks if the buddy of the 16KB block is still free; if so, it coalesces those two blocks. This recursive coalescing process continues up the tree, either restoring the entire free space or stopping when a buddy is found to be in use.
+
+![](images/680016cc1ed4d8d8cc13069cc17e74a3a3d452f00aa45a16b13bb2814886a625.jpg)
+Figure 17.8: Example Buddy-managed Heap
+
+The reason buddy allocation works so well is that it is simple to determine the buddy of a particular block. How, you ask? Think about the addresses of the blocks in the free space above. If you think carefully enough, you’ll see that the address of each buddy pair only differs by a single bit; which bit is determined by the level in the buddy tree. And thus you have a basic idea of how binary buddy allocation schemes work. For more detail, as always, see the Wilson survey $\left[ \mathsf { W } \pm 9 5 \right]$ .
+
+# Other Ideas
+
+One major problem with many of the approaches described above is their lack of scaling. Specifically, searching lists can be quite slow. Thus, advanced allocators use more complex data structures to address these costs, trading simplicity for performance. Examples include balanced binary trees, splay trees, or partially-ordered trees $\ [ \mathsf { W } + 9 5 ]$ .
+
+Given that modern systems often have multiple processors and run multi-threaded workloads (something you’ll learn about in great detail in the section of the book on Concurrency), it is not surprising that a lot of effort has been spent making allocators work well on multiprocessorbased systems. Two wonderful examples are found in Berger et al. $[ \mathrm { B } \mathrm { + } 0 0 ]$ and Evans [E06]; check them out for the details.
+
+These are but two of the thousands of ideas people have had over time about memory allocators; read on your own if you are curious. Failing that, read about how the glibc allocator works [S15], to give you a sense of what the real world is like.
+
+# 17.5 Summary
+
+In this chapter, we’ve discussed the most rudimentary forms of memory allocators. Such allocators exist everywhere, linked into every C program you write, as well as in the underlying OS which is managing memory for its own data structures. As with many systems, there are many
+
+trade-offs to be made in building such a system, and the more you know about the exact workload presented to an allocator, the more you could do to tune it to work better for that workload. Making a fast, space-efficient, scalable allocator that works well for a broad range of workloads remains an on-going challenge in modern computer systems.
 
 # References
 
-$[ \mathrm { B } \substack { + } 7 9 ]$ “The Convoy Phenomenon” by M. Blasgen, J. Gray, M. Mitoma, T. Price. ACM Operating Systems Review, 13:2, April 1979. Perhaps the first reference to convoys, which occurs in databases as well as the OS.
-[C54] “Priority Assignment in Waiting Line Problems” by A. Cobham. Journal of Operations Research, 2:70, pages 70–76, 1954. The pioneering paper on using an SJF approach in scheduling the repair of machines.
-[K64] “Analysis of a Time-Shared Processor” by Leonard Kleinrock. Naval Research Logistics Quarterly, 11:1, pages 59–73, March 1964. May be the first reference to the round-robin scheduling algorithm; certainly one of the first analyses of said approach to scheduling a time-shared system.
-[CK68] “Computer Scheduling Methods and their Countermeasures” by Edward G. Coffman and Leonard Kleinrock. AFIPS ’68 (Spring), April 1968. An excellent early introduction to and analysis of a number of basic scheduling disciplines.
-[J91] “The Art of Computer Systems Performance Analysis: Techniques for Experimental Design, Measurement, Simulation, and Modeling” by R. Jain. Interscience, New York, April 1991. The standard text on computer systems measurement. A great reference for your library, for sure.
-[O45] “Animal Farm” by George Orwell. Secker and Warburg (London), 1945. A great but depressing allegorical book about power and its corruptions. Some say it is a critique of Stalin and the pre-WWII Stalin era in the U.S.S.R; we say it’s a critique of pigs.
-[PV56] “Machine Repair as a Priority Waiting-Line Problem” by Thomas E. Phipps Jr., W. R. Van Voorhis. Operations Research, 4:1, pages 76–86, February 1956. Follow-on work that generalizes the SJF approach to machine repair from Cobham’s original work; also postulates the utility of an STCF approach in such an environment. Specifically, “There are certain types of repair work, ... involving much dismantling and covering the floor with nuts and bolts, which certainly should not be interrupted once undertaken; in other cases it would be inadvisable to continue work on a long job if one or more short ones became available (p.81).”
-[MB91] “The effect of context switches on cache performance” by Jeffrey C. Mogul, Anita Borg. ASPLOS, 1991. A nice study on how cache performance can be affected by context switching; less of an issue in today’s systems where processors issue billions of instructions per second but context-switches still happen in the millisecond time range.
-[W15] “You can’t have your cake and eat it” by Authors: Unknown.. Wikipedia (as of December 2015). http://en.wikipedia.org/wiki/You can’t have your cake and eat it. The best part of this page is reading all the similar idioms from other languages. In Tamil, you can’t “have both the moustache and drink the soup.”
+$\left[ \mathrm { B } { + } 0 0 \right]$ “Hoard: A Scalable Memory Allocator for Multithreaded Applications” by Emery D. Berger, Kathryn S. McKinley, Robert D. Blumofe, Paul R. Wilson. ASPLOS-IX, November 2000. Berger and company’s excellent allocator for multiprocessor systems. Beyond just being a fun paper, also used in practice!
+[B94] “The Slab Allocator: An Object-Caching Kernel Memory Allocator” by Jeff Bonwick. USENIX ’94. A cool paper about how to build an allocator for an operating system kernel, and a great example of how to specialize for particular common object sizes.
+[E06] “A Scalable Concurrent malloc(3) Implementation for FreeBSD” by Jason Evans. April, 2006. http://people.freebsd.org/˜jasone/jemalloc/bsdcan2006/jemalloc.pdf. A detailed look at how to build a real modern allocator for use in multiprocessors. The “jemalloc” allocator is in widespread use today, within FreeBSD, NetBSD, Mozilla Firefox, and within Facebook.
+[K65] “A Fast Storage Allocator” by Kenneth C. Knowlton. Communications of the ACM, Volume 8:10, October 1965. The common reference for buddy allocation. Random strange fact: Knuth gives credit for the idea not to Knowlton but to Harry Markowitz, a Nobel-prize winning economist. Another strange fact: Knuth communicates all of his emails via a secretary; he doesn’t send email himself, rather he tells his secretary what email to send and then the secretary does the work of emailing. Last Knuth fact: he created TeX, the tool used to typeset this book. It is an amazing piece of software4.
+[S15] “Understanding glibc malloc” by Sploitfun. February, 2015. sploitfun.wordpress.com/ 2015/02/10/understanding-glibc-malloc/. A deep dive into how glibc malloc works. Amazingly detailed and a very cool read.
+[W+95] “Dynamic Storage Allocation: A Survey and Critical Review” by Paul R. Wilson, Mark S. Johnstone, Michael Neely, David Boles. International Workshop on Memory Management, Scotland, UK, September 1995. An excellent and far-reaching survey of many facets of memory allocation. Far too much detail to go into in this tiny chapter!
 
 # Homework (Simulation)
 
-This program, scheduler.py, allows you to see how different schedulers perform under scheduling metrics such as response time, turnaround time, and total wait time. See the README for details.
+The program, malloc.py, lets you explore the behavior of a simple free-space allocator as described in the chapter. See the README for details of its basic operation.
 
 # Questions
 
-1. Compute the response time and turnaround time when running three jobs of length 200 with the SJF and FIFO schedulers.
-2. Now do the same but with jobs of different lengths: 100, 200, and 300.
-3. Now do the same, but also with the RR scheduler and a time-slice of 1.
-4. For what types of workloads does SJF deliver the same turnaround times as FIFO?
-5. For what types of workloads and quantum lengths does SJF deliver the same response times as RR?
-6. What happens to response time with SJF as job lengths increase? Can you use the simulator to demonstrate the trend?
-7. What happens to response time with RR as quantum lengths increase? Can you write an equation that gives the worst-case response time, given $N$ jobs?
+1. First run with the flags $- \texttt { n } 1 0 ~ - \texttt { H } 0 ~ - \texttt { p }$ BEST -s 0 to generate a few random allocations and frees. Can you predict what alloc()/free() will return? Can you guess the state of the free list after each request? What do you notice about the free list over time?
+2. How are the results different when using a WORST fit policy to search the free list (-p WORST)? What changes?
+3. What about when using FIRST fit (-p FIRST)? What speeds up when you use first fit?
+4. For the above questions, how the list is kept ordered can affect the time it takes to find a free location for some of the policies. Use the different free list orderings $- 1$ ADDRSORT, -l SIZESORT+, -l SIZESORT-) to see how the policies and the list orderings interact.
+5. Coalescing of a free list can be quite important. Increase the number of random allocations (say to $- \mathtt { n } \mathtt { \perp 0 0 0 }$ ). What happens to larger allocation requests over time? Run with and without coalescing (i.e., without and with the -C flag). What differences in outcome do you see? How big is the free list over time in each case? Does the ordering of the list matter in this case?
+6. What happens when you change the percent allocated fraction -P to higher than 50? What happens to allocations as it nears 100? What about as the percent nears 0?
+7. What kind of specific requests can you make to generate a highlyfragmented free space? Use the $- \mathtt { A }$ flag to create fragmented free lists, and see how different policies and options change the organization of the free list.
